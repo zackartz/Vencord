@@ -302,7 +302,6 @@ export function encryptMessage(
     message: string,
     recipients: string[],
 ): Promise<string> {
-    // const gpgCommand = `echo "${message}" | ${gpg(`--encrypt --armor `)}`};
     const gpgCommand = `echo ${message} | ${gpg(`--encrypt --armor ${recipients.map((r) => `-r ${r}`).join(" ")}`)}`;
     return executeCommand(gpgCommand);
 }
