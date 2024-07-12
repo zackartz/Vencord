@@ -171,7 +171,12 @@ export async function saveKey(
             console.log(userId, config.user.id);
             throw new Error("unable to change userId, what are you doing?");
         }
+
         config.user.id = userId;
+        const keyExists = config.user.keys.findIndex(
+            (k) => k.fingerprint === key.fingerprint,
+        );
+        if (keyExists !== -1) return;
         config.user.keys.push(key);
     } else {
         const tryUser = config.friends.findIndex((f) => f.id === userId);
