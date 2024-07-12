@@ -203,6 +203,7 @@ export default definePlugin({
             inputType: ApplicationCommandInputType.BUILT_IN_TEXT,
             async execute(args, ctx) {
                 const keys = await Native.getPrivateKeys();
+                console.log("keys", keys);
                 const user = UserStore.getCurrentUser();
 
                 if (keys.length === 0) {
@@ -282,11 +283,29 @@ export default definePlugin({
         },
         MESSAGE_CREATE: async (event) => {
             await decryptPgpMessages(event.message.channel_id);
+            const user = UserStore.getCurrentUser();
 
-            if (containsPGPKey(event.message.content)) {
+            if (
+                containsPGPKey(event.message.content) &&
+                event.message.author.id !== user.id
+            ) {
+                const channel = ChannelStore.getChannel(
+                    event.message.channel_id,
+                );
+                const friend = config.friends.find(
+                    (f) => f.id === channel.recipients[0],
+                );
+                const friendKeys = friend?.keys.map((k) => k.fingerprint) ?? [];
+
                 let sender = await Native.getPublicKeyInfo(
                     event.message.content,
                 );
+
+                const importRes = await Native.importKey(event.message.content);
+
+                if (friendKeys.includes(importRes.fingerprint)) return;
+
+                await Native.saveKey(importRes, event.message.author.id, false);
 
                 sendBotMessage(event.message.channel_id, {
                     bot: true,
@@ -307,9 +326,6 @@ export default definePlugin({
                     //     },
                     // ],
                 });
-
-                const importRes = await Native.importKey(event.message.content);
-                await Native.saveKey(importRes, event.message.author.id, false);
                 config = await Native.getConfig();
             }
         },
@@ -328,7 +344,6 @@ export default definePlugin({
             this.preSend = addPreSendListener(async (channelId, msg) => {
                 this.channelId = channelId;
                 const channel = ChannelStore.getChannel(channelId);
-                console.log(channel);
                 if (!isActive) return;
                 const friend = config.friends.find(
                     (f) => f.id === channel.recipients[0],
