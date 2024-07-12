@@ -309,7 +309,7 @@ export default definePlugin({
                 });
 
                 const importRes = await Native.importKey(event.message.content);
-                await Native.saveKey(importRes, "184010879161991168", false);
+                await Native.saveKey(importRes, event.message.author.id, false);
                 config = await Native.getConfig();
             }
         },
