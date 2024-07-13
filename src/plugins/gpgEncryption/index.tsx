@@ -20,10 +20,20 @@ import { updateMessage } from "@api/MessageUpdater";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { Devs } from "@utils/constants";
 import definePlugin, { PluginNative } from "@utils/types";
-import { ChannelStore, MessageCache, Tooltip } from "@webpack/common";
+import { ChannelStore, MessageCache, Text, Tooltip } from "@webpack/common";
 import { Message } from "discord-types/general";
 import { React, UserStore } from "@webpack/common";
 import { Config } from "./native";
+import { addButton, removeButton } from "@api/MessagePopover";
+import {
+    ModalCloseButton,
+    ModalContent,
+    ModalHeader,
+    ModalRoot,
+    ModalSize,
+    closeModal,
+    openModal,
+} from "@utils/modal";
 
 const LOCK_ICON = ErrorBoundary.wrap(
     () => (
@@ -62,6 +72,11 @@ const Native = VencordNative.pluginHelpers.GPGEncryption as PluginNative<
 let isActive = false;
 let config: Config;
 
+// is this maybe kinda bad (infinite growing map of all decrypted messages in the session), yes.
+// will it grow enough to cause issues? ehh, probably not.
+// modern pcs have gb of ram, why not cache some messages eh?
+const decryptedMessages: Map<string, string> = new Map();
+
 const containsPGPMessage = (text: string): boolean => {
     return PGP_MESSAGE_REGEX.test(text);
 };
@@ -93,6 +108,7 @@ const decryptPgpMessages = async (channelId: string) => {
                 updateMessage(channelId, pgpMessage.id, {
                     content,
                 });
+                decryptedMessages.set(pgpMessage.id, pgpMessage.content);
                 addDecoration(`pgp-lock`, LOCK_ICON, pgpMessage.id);
             } catch (e) {
                 console.log("unable to decrypt", e);
@@ -158,6 +174,45 @@ enum SetupState {
 
 let setupState = SetupState.NONE;
 
+function openEncryptionInfoModal(content?: string) {
+    const key = openModal((props) => (
+        <ErrorBoundary>
+            <ModalRoot {...props} size={ModalSize.MEDIUM}>
+                <ModalHeader>
+                    <Text variant="heading-lg/semibold" style={{ flexGrow: 1 }}>
+                        View Raw
+                    </Text>
+                    <ModalCloseButton onClick={() => closeModal(key)} />
+                </ModalHeader>
+                <ModalContent>
+                    {content ? (
+                        <div style={{ padding: "16px 0" }}>
+                            <pre
+                                style={{
+                                    background: "var(--background-secondary)",
+                                    padding: "8px",
+                                    borderRadius: "4px",
+                                }}
+                            >
+                                <code style={{ color: "var(--text-normal)" }}>
+                                    {content}
+                                </code>
+                            </pre>
+                        </div>
+                    ) : (
+                        <div style={{ padding: "16px 0" }}>
+                            <Text>
+                                This message is unencrypted or we were unable to
+                                get the raw message.
+                            </Text>
+                        </div>
+                    )}
+                </ModalContent>
+            </ModalRoot>
+        </ErrorBoundary>
+    ));
+}
+
 export default definePlugin({
     name: "GPGEncryption",
     description:
@@ -168,6 +223,7 @@ export default definePlugin({
         "CommandsAPI",
         "MessageDecorationsAPI",
         "ChatInputButtonAPI",
+        "MessagePopoverAPI",
     ],
 
     commands: [
@@ -337,9 +393,41 @@ export default definePlugin({
         },
     },
 
+    Icon: () => (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            height={24}
+            width={24}
+            fill="currentColor"
+            className="size-6"
+        >
+            <path
+                fillRule="evenodd"
+                d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12Zm8.706-1.442c1.146-.573 2.437.463 2.126 1.706l-.709 2.836.042-.02a.75.75 0 0 1 .67 1.34l-.04.022c-1.147.573-2.438-.463-2.127-1.706l.71-2.836-.042.02a.75.75 0 1 1-.671-1.34l.041-.022ZM12 9a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Z"
+                clipRule="evenodd"
+            />
+        </svg>
+    ),
+
     async start() {
         config = await Native.getConfig();
         addChatBarButton("gpgToggle", GPGToggle);
+        addButton("GPGEncryption", (msg) => {
+            const channel = ChannelStore.getChannel(msg.channel_id);
+
+            // if (!containsPGPMessage(msg.content)) return null;
+            //
+            const unencryptedContent = decryptedMessages.get(msg.id);
+
+            return {
+                label: "Encryption Information",
+                icon: this.Icon,
+                message: msg,
+                channel,
+                onClick: () => openEncryptionInfoModal(unencryptedContent),
+            };
+        });
         try {
             this.preSend = addPreSendListener(async (channelId, msg) => {
                 this.channelId = channelId;
@@ -368,5 +456,6 @@ export default definePlugin({
     stop() {
         removePreSendListener(this.preSend);
         removeChatBarButton("gpgToggle");
+        removeButton("GPGEncryption");
     },
 });
