@@ -38,12 +38,16 @@ export let cache: WebpackInstance["c"];
 
 export type FilterFn = (mod: any) => boolean;
 
-type PropsFilter = Array<string>;
-type CodeFilter = Array<string | RegExp>;
-type StoreNameFilter = string;
+export type PropsFilter = Array<string>;
+export type CodeFilter = Array<string | RegExp>;
+export type StoreNameFilter = string;
 
-const stringMatches = (s: string, filter: CodeFilter) =>
-    filter.every((f) => (typeof f === "string" ? s.includes(f) : f.test(s)));
+export const stringMatches = (s: string, filter: CodeFilter) =>
+    filter.every(f =>
+        typeof f === "string"
+            ? s.includes(f)
+            : (f.global && (f.lastIndex = 0), f.test(s))
+    );
 
 export const filters = {
     byProps: (...props: PropsFilter): FilterFn =>
@@ -298,9 +302,31 @@ export const findModuleId = traceFunction(
             logger.warn(err);
         }
 
-        return null;
-    },
-);
+    return results;
+});
+
+/**
+ * Find the id of the first module factory that includes all the given code
+ * @returns string or null
+ */
+export const findModuleId = traceFunction("findModuleId", function findModuleId(...code: CodeFilter) {
+    code = code.map(canonicalizeMatch);
+
+    for (const id in wreq.m) {
+        if (stringMatches(wreq.m[id].toString(), code)) return id;
+    }
+
+    const err = new Error("Didn't find module with code(s):\n" + code.join("\n"));
+    if (IS_DEV) {
+        if (!devToolsOpen)
+            // Strict behaviour in DevBuilds to fail early and make sure the issue is found
+            throw err;
+    } else {
+        logger.warn(err);
+    }
+
+    return null;
+});
 
 /**
  * Find the first module factory that includes all the given code
@@ -347,12 +373,8 @@ export const lazyWebpackSearchHistory = [] as Array<
  * Note that the example below exists already as an api, see {@link findByPropsLazy}
  * @example const mod = proxyLazy(() => findByProps("blah")); console.log(mod.blah);
  */
-export function proxyLazyWebpack<T = any>(
-    factory: () => any,
-    attempts?: number,
-) {
-    if (IS_REPORTER)
-        lazyWebpackSearchHistory.push(["proxyLazyWebpack", [factory]]);
+export function proxyLazyWebpack<T = any>(factory: () => T, attempts?: number) {
+    if (IS_REPORTER) lazyWebpackSearchHistory.push(["proxyLazyWebpack", [factory]]);
 
     return proxyLazy<T>(factory, attempts);
 }
@@ -507,19 +529,12 @@ export function findExportedComponentLazy<T extends object = any>(
  *             closeModal: filters.byCode("key==")
  *          })
  */
-export const mapMangledModule = traceFunction(
-    "mapMangledModule",
-    function mapMangledModule<S extends string>(
-        code: string | RegExp | CodeFilter,
-        mappers: Record<S, FilterFn>,
-    ): Record<S, any> {
-        if (!Array.isArray(code)) code = [code];
-        code = code.map(canonicalizeMatch);
+export const mapMangledModule = traceFunction("mapMangledModule", function mapMangledModule<S extends string>(code: string | RegExp | CodeFilter, mappers: Record<S, FilterFn>): Record<S, any> {
+    const exports = {} as Record<S, any>;
 
-        const exports = {} as Record<S, any>;
-
-        const id = findModuleId(...code);
-        if (id === null) return exports;
+    const id = findModuleId(...Array.isArray(code) ? code : [code]);
+    if (id === null)
+        return exports;
 
         const mod = wreq(id as any);
         outer: for (const key in mod) {
@@ -615,10 +630,8 @@ export async function extractAndLoadChunks(
     }
 
     if (rawChunkIds) {
-        const chunkIds = Array.from(rawChunkIds.matchAll(ChunkIdsRegex)).map(
-            (m: any) => m[1],
-        );
-        await Promise.all(chunkIds.map((id) => wreq.e(id)));
+        const chunkIds = Array.from(rawChunkIds.matchAll(ChunkIdsRegex)).map((m: any) => Number(m[1]));
+        await Promise.all(chunkIds.map(id => wreq.e(id)));
     }
 
     if (wreq.m[entryPointId] == null) {
@@ -633,7 +646,7 @@ export async function extractAndLoadChunks(
         return false;
     }
 
-    wreq(entryPointId);
+    wreq(Number(entryPointId));
     return true;
 }
 
@@ -699,6 +712,8 @@ export function waitFor(
  * @returns Mapping of found modules
  */
 export function search(...code: CodeFilter) {
+    code = code.map(canonicalizeMatch);
+
     const results = {} as Record<number, Function>;
     const factories = wreq.m;
 
